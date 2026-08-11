@@ -1,14 +1,8 @@
 name: Packages Static Check
 
-# Controls when the action will run. Triggers the workflow on push or pull request
-# events but only for the master branch
+# Manual fallback for the static validation included in Packages Test.
 on:
-  push:
-    branches:
-      - master
-  pull_request:
-    branches:
-      - master
+  workflow_dispatch:
 
 jobs:
   # This workflow contains a single job called "build"
@@ -18,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
-        uses: actions/setup-python@v3
+        uses: actions/setup-python@v5
         with:
           python-version: 3.8
 

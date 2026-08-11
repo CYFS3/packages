@@ -1,111 +1,194 @@
 name: Packages Test
 
-# Controls when the action will run. Triggers the workflow on push or pull request
-# events but only for the master branch
 on:
-    push:
-        branches:
-          - master
-    pull_request:
-        branches:
-            - master
-    workflow_dispatch:
-    # Runs at 00:00 UTC on the 1, 16 and 31th of every month、
-    schedule:
-        - cron:  '0 0 */15 * *'
+  pull_request:
+    branches:
+      - master
+  schedule:
+    - cron: "0 0 * * *"
+      timezone: "Asia/Shanghai"
+  workflow_dispatch:
+    inputs:
+      create_failure_issue:
+        description: Create or update the failure issue when this run fails
+        required: false
+        default: false
+        type: boolean
 
-
-# Grant GITHUB_TOKEN the permissions required to make a Pages deployment
-permissions:
-    pages: write      # to deploy to Pages
-    id-token: write   # to verify the deployment originates from an appropriate source
+permissions: {}
 
 concurrency:
-    group: pkgs-test
-    cancel-in-progress: false # wait for finish.
+  group: packages-test-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-    change_pull_request:
-        if: ${{ github.event_name == 'pull_request' }}
-        uses: RT-Thread/pkgs-test/.github/workflows/pkgs-action.yml@main
+  detect-pull-request-packages:
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    outputs:
+      packages: ${{ steps.changed-packages.outputs.packages }}
+      has-packages: ${{ steps.changed-packages.outputs.has-packages }}
+    steps:
+      - uses: actions/checkout@v4
         with:
-            package-append-res: true
-            deploy-pages: false
+          fetch-depth: 0
 
-    change_push:
-        if: ${{ github.event_name == 'push' }}
-        uses: RT-Thread/pkgs-test/.github/workflows/pkgs-action.yml@main
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-            package-append-res: true
-            deploy-pages: true
+          python-version: "3.11"
 
-    master-stm32h750-artpi-test:
-        if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'}}
-        uses: RT-Thread/pkgs-test/.github/workflows/pkgs-action.yml@main
-        with:
-            bsps: stm32/stm32h750-artpi:sourcery-arm
-            rt-thread-versions: branch:master
-            package-append-res: true
-            package-test-all: true
-            deploy-pages: true
-            check-errors: false
+      - name: Detect changed packages
+        id: changed-packages
+        shell: bash
+        run: |
+          packages="$(python tools/ci/detect_changed_packages.py \
+            "${{ github.event.pull_request.base.sha }}" \
+            "${{ github.event.pull_request.head.sha }}")"
+          echo "packages=${packages}" >> "$GITHUB_OUTPUT"
+          if [ -n "$packages" ]; then
+            echo "has-packages=true" >> "$GITHUB_OUTPUT"
+            echo "Changed packages: $packages" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "has-packages=false" >> "$GITHUB_OUTPUT"
+            echo "No package changes require compilation." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
-    master-k210-test:
-        if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'}}
-        needs: master-stm32h750-artpi-test
-        uses: RT-Thread/pkgs-test/.github/workflows/pkgs-action.yml@main
-        with:
-            bsps: k210:sourcery-riscv-none-embed
-            rt-thread-versions: branch:master
-            package-append-res: true
-            package-test-all: true
-            deploy-pages: true
-            check-errors: false
+  pull-request-packages:
+    needs: detect-pull-request-packages
+    if: ${{ github.event_name == 'pull_request' && needs.detect-pull-request-packages.outputs.has-packages == 'true' }}
+    permissions:
+      contents: read
+    uses: RT-Thread/pkgs-test/.github/workflows/pkgs-action.yml@main
+    with:
+      pkgs: ${{ needs.detect-pull-request-packages.outputs.packages }}
+      test-specific-pkgs: true
+      package-test-all: false
+      package-append-res: false
+      check-errors: true
+      deploy-pages: false
 
-    master-qemu-vexpress-a9-test:
-        if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'}}
-        needs: master-k210-test
-        uses: RT-Thread/pkgs-test/.github/workflows/pkgs-action.yml@main
-        with:
-            bsps: qemu-vexpress-a9:sourcery-arm
-            rt-thread-versions: branch:master
-            package-append-res: true
-            package-test-all: true
-            deploy-pages: true
-            check-errors: false
+  tools-check:
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/aciont_tool.yml
 
-    v4_1_1-stm32h750-artpi-test:
-        needs: master-qemu-vexpress-a9-test
-        if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'}}
-        uses: RT-Thread/pkgs-test/.github/workflows/pkgs-action.yml@main
+  daily-static-check:
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
         with:
-            bsps: stm32/stm32h750-artpi:sourcery-arm
-            rt-thread-versions: tag:v4.1.1
-            package-append-res: true
-            package-test-all: true
-            deploy-pages: true
-            check-errors: false
+          ref: ${{ github.event.repository.default_branch }}
 
-    v4_1_1-k210-test:
-        if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'}}
-        needs: v4_1_1-stm32h750-artpi-test
-        uses: RT-Thread/pkgs-test/.github/workflows/pkgs-action.yml@main
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-            bsps: k210:sourcery-riscv-none-embed
-            rt-thread-versions: tag:v4.1.1
-            package-append-res: true
-            package-test-all: true
-            deploy-pages: true
-            check-errors: false
+          python-version: "3.8"
 
-    v4_1_1-qemu-vexpress-a9-test:
-        if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'}}
-        needs: v4_1_1-k210-test
-        uses: RT-Thread/pkgs-test/.github/workflows/pkgs-action.yml@main
+      - name: Install tools
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python-tk scons rxvt-unicode
+          sudo apt-get -qq install -y gcc-multilib libc6:i386 libgcc1:i386 gcc-4.6-base:i386 libstdc++5:i386 libstdc++6:i386 libsdl-dev || true
+          pip install requests tqdm wget html-table kconfiglib
+
+      - name: Validate all package metadata
+        shell: bash
+        run: |
+          BASE_ROOT="${{ github.workspace }}"
+          cd ..
+          mkdir packages_temp
+          cp packages -R packages_temp
+          mv packages_temp packages
+          cd packages/packages_temp
+          echo 'source "$PKGS_DIR/packages/Kconfig"' > Kconfig
+          cd "$BASE_ROOT"
+          export PKGS_ROOT="$BASE_ROOT/packages_temp"
+          git clone --depth=1 --branch=master https://github.com/RT-Thread/rt-thread.git rt-thread
+          export RTT_ROOT="$BASE_ROOT/rt-thread"
+          export TERM=xterm
+          cd "$RTT_ROOT/bsp/qemu-vexpress-a9"
+          python -c 'import kconfiglib; kconfiglib.standard_kconfig()'
+          cd "$PKGS_ROOT/packages"
+          python ci.py
+
+  daily-full-check:
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    permissions:
+      contents: read
+    uses: RT-Thread/pkgs-test/.github/workflows/pkgs-action.yml@main
+    with:
+      rt-thread-versions: branch:master tag:v4.1.1
+      bsps: stm32/stm32h750-artpi:sourcery-arm k210:sourcery-riscv-none-embed qemu-vexpress-a9:sourcery-arm
+      package-test-all: true
+      package-append-res: false
+      check-errors: true
+      deploy-pages: false
+
+  report-daily-failure:
+    needs:
+      - daily-static-check
+      - daily-full-check
+      - tools-check
+    if: ${{ always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.create_failure_issue)) && (needs.daily-static-check.result == 'failure' || needs.daily-full-check.result == 'failure' || needs.tools-check.result == 'failure') }}
+    runs-on: ubuntu-22.04
+    permissions:
+      issues: write
+    steps:
+      - name: Create or update failure issue
+        uses: actions/github-script@v7
         with:
-            bsps: qemu-vexpress-a9:sourcery-arm
-            rt-thread-versions: tag:v4.1.1
-            package-append-res: true
-            package-test-all: true
-            deploy-pages: true
-            check-errors: false
+          script: |
+            const marker = '<!-- daily-packages-check -->';
+            const title = '[CI] Daily packages check failed';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const staticResult = '${{ needs.daily-static-check.result }}';
+            const fullResult = '${{ needs.daily-full-check.result }}';
+            const toolsResult = '${{ needs.tools-check.result }}';
+            const details = [
+              marker,
+              '@rb666 @cyfs',
+              '',
+              '每日全量检查失败，请协助处理。',
+              '',
+              `- 静态检查：${staticResult}`,
+              `- 全量编译：${fullResult}`,
+              `- ToolsCI：${toolsResult}`,
+              `- Commit：${context.sha}`,
+              `- 运行记录：${runUrl}`,
+            ].join('\n');
+
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              per_page: 100,
+            });
+            const existing = issues.find((issue) =>
+              !issue.pull_request && issue.title === title && issue.body?.includes(marker)
+            );
+
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body: details,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body: details,
+              });
+            }
