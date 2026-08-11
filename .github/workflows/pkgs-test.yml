@@ -9,6 +9,21 @@ on:
       timezone: "Asia/Shanghai"
   workflow_dispatch:
     inputs:
+      rt_thread_versions:
+        description: RT-Thread versions used by the manual package check
+        required: true
+        default: branch:master
+        type: string
+      bsps:
+        description: BSPs used by the manual package check
+        required: true
+        default: qemu-vexpress-a9:sourcery-arm
+        type: string
+      run_static_check:
+        description: Run the full metadata and URL validation
+        required: false
+        default: false
+        type: boolean
       create_failure_issue:
         description: Create or update the failure issue when this run fails
         required: false
@@ -77,7 +92,7 @@ jobs:
     uses: ./.github/workflows/aciont_tool.yml
 
   daily-static-check:
-    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.run_static_check) }}
     runs-on: ubuntu-22.04
     permissions:
       contents: read
@@ -127,8 +142,8 @@ jobs:
       contents: read
     uses: RT-Thread/pkgs-test/.github/workflows/pkgs-action.yml@main
     with:
-      rt-thread-versions: branch:master tag:v4.1.1
-      bsps: stm32/stm32h750-artpi:sourcery-arm k210:sourcery-riscv-none-embed qemu-vexpress-a9:sourcery-arm
+      rt-thread-versions: ${{ github.event_name == 'schedule' && 'branch:master tag:v4.1.1' || inputs.rt_thread_versions }}
+      bsps: ${{ github.event_name == 'schedule' && 'stm32/stm32h750-artpi:sourcery-arm k210:sourcery-riscv-none-embed qemu-vexpress-a9:sourcery-arm' || inputs.bsps }}
       package-test-all: true
       package-append-res: false
       check-errors: true
