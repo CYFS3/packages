@@ -28,11 +28,11 @@ jobs:
     name: ${{ inputs.artifact_name }}
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           path: repository
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: RT-Thread/pkgs-test
           ref: 8bdeeb41a7ed6bb8658486b568190a9717f06e08
@@ -67,7 +67,7 @@ jobs:
           python pkgs-test.py
 
       - name: Upload shard results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ inputs.artifact_name }}
           path: ${{ github.workspace }}/pkgs-test/artifacts_export
@@ -79,13 +79,13 @@ jobs:
     needs: packages-test
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: RT-Thread/pkgs-test
           ref: 8bdeeb41a7ed6bb8658486b568190a9717f06e08
 
       - name: Download shard results
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.artifact_name }}
 
