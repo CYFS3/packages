@@ -139,6 +139,35 @@ class AggregateValidationTests(unittest.TestCase):
 
         self.assertEqual(content_check.call_count, 2)
 
+    def test_failed_packages_are_reported_as_annotations_and_summary(self):
+        records = [
+            package_record(Path("repo"), "broken"),
+            package_record(Path("repo"), "healthy"),
+        ]
+        with mock.patch.object(
+            CI, "json_file_content_check", side_effect=[False, True]
+        ):
+            with mock.patch.object(CI, "file_path_check", return_value=True):
+                with mock.patch("builtins.print") as printer:
+                    with tempfile.TemporaryDirectory() as temp_dir:
+                        summary_path = Path(temp_dir) / "summary.md"
+                        with mock.patch.dict(
+                            CI.os.environ,
+                            {"GITHUB_STEP_SUMMARY": str(summary_path)},
+                            clear=False,
+                        ):
+                            self.assertFalse(CI.check_package_records(records))
+
+                        output = "\n".join(
+                            str(call.args[0])
+                            for call in printer.call_args_list
+                            if call.args
+                        )
+                        self.assertIn("::error", output)
+                        self.assertIn("broken", output)
+                        self.assertNotIn("healthy: URL or metadata validation failed", output)
+                        self.assertIn("## Failed packages", summary_path.read_text(encoding="utf-8"))
+
     def test_valid_commit_sha_does_not_print_branch_warning(self):
         metadata = {
             "name": "alpha",

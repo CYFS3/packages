@@ -134,6 +134,69 @@ def file_path_check(package_info, pathname):
     return False
 
 
+def _github_command_escape(value):
+    """Escape values used in GitHub Actions workflow commands."""
+
+    return (
+        str(value)
+        .replace("%", "%25")
+        .replace("\r", "%0D")
+        .replace("\n", "%0A")
+    )
+
+
+def _package_relative_path(pathname):
+    path = Path(pathname)
+    try:
+        return path.resolve().relative_to(Path.cwd().resolve()).as_posix()
+    except (OSError, ValueError):
+        return path.as_posix()
+
+
+def _write_failure_summary(failures):
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not summary_path or not failures:
+        return
+
+    lines = [
+        "## Failed packages",
+        "",
+        "| Package | Path | Reason |",
+        "| --- | --- | --- |",
+    ]
+    for record, reason in failures:
+        package = str(record.name).replace("|", "\\|")
+        package_path = _package_relative_path(record.path).replace("|", "\\|")
+        failure_reason = str(reason).replace("|", "\\|")
+        lines.append("| `{}` | `{}` | {} |".format(package, package_path, failure_reason))
+    lines.append("")
+
+    try:
+        with open(summary_path, "a", encoding="utf-8") as stream:
+            stream.write("\n".join(lines))
+    except OSError as exc:
+        print("Warning: unable to write GitHub step summary: {}".format(exc))
+
+
+def _report_failed_packages(failures):
+    if not failures:
+        return
+
+    print("\nFAILED PACKAGES ({}):".format(len(failures)))
+    for record, reason in failures:
+        package_path = _package_relative_path(record.path)
+        annotation = "{}: {}".format(record.name, reason)
+        print(
+            "::error file={},title={}::{}".format(
+                _github_command_escape(package_path),
+                _github_command_escape("Package validation failed"),
+                _github_command_escape(annotation),
+            )
+        )
+        print("- {} ({})".format(record.name, reason))
+    _write_failure_summary(failures)
+
+
 @lru_cache(maxsize=None)
 def check_branch_exists(git_url, branch_name):
     """Check whether branch_name exists in git_url."""
@@ -375,11 +438,13 @@ def check_package_records(records):
     """Validate all selected package records and aggregate failures."""
 
     valid = True
+    failures = []
     for index, record in enumerate(records, 1):
         print("\nNo.{} {}".format(index, record.name))
         if record.error or not record.metadata:
             print("Error: {} ({})".format(record.error, record.path))
             valid = False
+            failures.append((record, record.error or "Unable to read package metadata."))
             continue
 
         try:
@@ -388,11 +453,14 @@ def check_package_records(records):
         except Exception as exc:
             print("Error checking {}: {}".format(record.path, exc))
             valid = False
+            failures.append((record, str(exc)))
             continue
 
         if not content_valid or not path_valid:
             valid = False
+            failures.append((record, "URL or metadata validation failed"))
 
+    _report_failed_packages(failures)
     print("\nChecked {} package(s).".format(len(records)))
     return valid
 
