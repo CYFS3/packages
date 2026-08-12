@@ -43,6 +43,24 @@ class UrlValidationTests(unittest.TestCase):
 
         self.assertEqual(get.call_count, CI.URL_RETRIES)
 
+    def test_transient_502_can_recover(self):
+        responses = [mock.Mock(status_code=502), mock.Mock(status_code=502), mock.Mock(status_code=200)]
+        with mock.patch.object(CI.requests, "get", side_effect=responses) as get:
+            with mock.patch.object(CI.time, "sleep") as sleep:
+                self.assertTrue(CI.determine_url_valid("https://github.com/RT-Thread/recover"))
+
+        self.assertEqual(get.call_count, 3)
+        self.assertEqual(sleep.call_args_list, [mock.call(1), mock.call(2)])
+
+    def test_not_found_is_not_retried(self):
+        response = mock.Mock(status_code=404)
+        with mock.patch.object(CI.requests, "get", return_value=response) as get:
+            with mock.patch.object(CI.time, "sleep") as sleep:
+                self.assertFalse(CI.determine_url_valid("https://github.com/RT-Thread/missing"))
+
+        get.assert_called_once()
+        sleep.assert_not_called()
+
     def test_unsupported_host_is_rejected_without_request(self):
         with mock.patch.object(CI.requests, "get") as get:
             self.assertFalse(CI.determine_url_valid("https://example.com/pkg.zip"))
@@ -120,6 +138,31 @@ class AggregateValidationTests(unittest.TestCase):
                 self.assertFalse(CI.check_package_records(records))
 
         self.assertEqual(content_check.call_count, 2)
+
+    def test_valid_commit_sha_does_not_print_branch_warning(self):
+        metadata = {
+            "name": "alpha",
+            "category": "misc",
+            "enable": "PKG_USING_ALPHA",
+            "author": {"name": "A", "email": "a@example.com"},
+            "license": "MIT",
+            "repository": "https://github.com/a/alpha",
+            "site": [
+                {
+                    "version": "v1",
+                    "URL": "https://github.com/a/alpha.git",
+                    "VER_SHA": "deadbeef",
+                }
+            ],
+        }
+        with mock.patch.object(CI, "determine_url_valid", return_value=True):
+            with mock.patch.object(CI, "check_branch_exists", return_value=False):
+                with mock.patch.object(CI, "check_commit_sha_exists", return_value=True):
+                    with mock.patch("builtins.print") as printer:
+                        self.assertTrue(CI.json_file_content_check(metadata))
+
+        output = " ".join(str(call) for call in printer.call_args_list)
+        self.assertNotIn("branch 'deadbeef'", output)
 
     def test_discovery_keeps_invalid_json_for_its_shard(self):
         with tempfile.TemporaryDirectory() as temp_dir:

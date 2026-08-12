@@ -17,7 +17,8 @@ import requests
 
 
 REQUEST_TIMEOUT_SECONDS = 20
-URL_RETRIES = 3
+URL_RETRIES = 4
+RETRYABLE_HTTP_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
 @dataclass(frozen=True)
@@ -90,6 +91,10 @@ def determine_url_valid(url_from_srv):
             if 200 <= response.status_code < 400:
                 return True
             last_error = "HTTP {}".format(response.status_code)
+            if response.status_code == 404:
+                break
+            if response.status_code not in RETRYABLE_HTTP_STATUS_CODES:
+                break
         except requests.RequestException as exc:
             last_error = str(exc)
         finally:
@@ -97,7 +102,7 @@ def determine_url_valid(url_from_srv):
                 _close_response(response)
 
         if attempt + 1 < URL_RETRIES:
-            time.sleep(1)
+            time.sleep(2**attempt)
 
     print("Warning : {} is invalid ({}).".format(url_from_srv, last_error))
     return False
@@ -180,13 +185,15 @@ def check_commit_sha_exists(repo_url, commit_sha):
                 return True
             if response.status_code == 404:
                 return False
+            if response.status_code not in RETRYABLE_HTTP_STATUS_CODES:
+                return False
         except requests.RequestException:
             pass
         finally:
             if response is not None:
                 _close_response(response)
         if attempt + 1 < URL_RETRIES:
-            time.sleep(1)
+            time.sleep(2**attempt)
     return False
 
 
@@ -261,9 +268,8 @@ def json_file_content_check(package_info):
                 print("VER_SHA is lost.")
                 valid = False
             elif not check_branch_exists(package_url, ver_sha):
-                print("The branch '{}' not exists, maybe a commit sha.".format(ver_sha))
                 if not check_commit_sha_exists(package_url, ver_sha):
-                    print("SHA is not exists.")
+                    print("SHA or branch '{}' is not valid.".format(ver_sha))
                     valid = False
         else:
             filename = site.get("filename")
