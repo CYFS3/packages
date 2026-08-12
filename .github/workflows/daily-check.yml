@@ -99,7 +99,7 @@ jobs:
               .map((job) => `  - [${job.name}](${job.html_url})`);
             const details = [
               marker,
-              '@rb666 @cyfs',
+              '@CYFS3 @Rbb666',
               '',
               '每日软件包 URL/元数据检查失败，请协助处理。',
               '',
