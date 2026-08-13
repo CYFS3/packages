@@ -9,6 +9,7 @@ permissions:
 
 jobs:
   test:
+    if: ${{ github.repository == 'RT-Thread/packages' }}
     runs-on: ubuntu-22.04
     name: Tools
     env:

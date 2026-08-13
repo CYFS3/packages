@@ -13,6 +13,7 @@ concurrency:
 
 jobs:
   detect-pull-request-packages:
+    if: ${{ github.repository == 'RT-Thread/packages' }}
     runs-on: ubuntu-22.04
     permissions:
       contents: read
@@ -47,7 +48,7 @@ jobs:
 
   pull-request-package-urls:
     needs: detect-pull-request-packages
-    if: ${{ needs.detect-pull-request-packages.outputs.has-packages == 'true' }}
+    if: ${{ github.repository == 'RT-Thread/packages' && needs.detect-pull-request-packages.outputs.has-packages == 'true' }}
     runs-on: ubuntu-22.04
     permissions:
       contents: read
@@ -73,6 +74,7 @@ jobs:
           python ci.py --packages "${packages[@]}"
 
   tools-check:
+    if: ${{ github.repository == 'RT-Thread/packages' }}
     permissions:
       contents: read
     uses: ./.github/workflows/aciont_tool.yml
